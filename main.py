@@ -54,12 +54,25 @@ def load_data():
     ) * 100
     sigungu_df["elderly_ratio"] = sigungu_df["elderly_ratio"].round(1)
 
-    # 2-2. GeoJSON 로드 (Raw URL 접근)
-    geojson_url = "https://raw.githubusercontent.com/vusguswl/population/bbe9dde463bdbe8592e6b85569fdc4c4d2905338/sigungu.geojson"
+    # 2-2. GeoJSON 로드 (main 브랜치 raw URL 또는 commit raw URL 순차 시도)
+    geojson_urls = [
+        "https://raw.githubusercontent.com/vusguswl/population/main/sigungu.geojson",
+        "https://github.com/vusguswl/population/raw/bbe9dde463bdbe8592e6b85569fdc4c4d2905338/sigungu.geojson",
+    ]
 
-    # requests로 GeoJSON 다운로드
-    res = requests.get(geojson_url)
-    res.raise_for_status()
+    res = None
+    for url in geojson_urls:
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                res = r
+                break
+        except Exception:
+            continue
+
+    if res is None or res.status_code != 200:
+        raise Exception("GeoJSON 파일을 불러올 수 없습니다. URL 상태를 확인해 주세요.")
+
     geojson_data = res.json()
 
     # GeoJSON 내 '코드' 속성도 5자리 문자열로 고정
@@ -81,7 +94,7 @@ except Exception as e:
     st.stop()
 
 
-# 3. Plotly Choropleth Mapbox 생성 (배경 지도 타일 없이 경계만 사용)
+# 3. Plotly Choropleth Mapbox 생성
 fig = px.choropleth_mapbox(
     sigungu_df,
     geojson=geojson_data,

@@ -16,10 +16,10 @@ st.caption(
 # 2. 데이터 불러오기 (캐싱을 적용하여 앱 속도 최적화)
 @st.cache_data
 def load_data():
-    # 데이터 URL 지정
+    # 데이터 URL 지정 (GitHub raw 주소 활용)
     url = "https://github.com/vusguswl/population/blob/main/population_ts_yearly_gender.zip?raw=true"
 
-    # pandas로 zip 파일 직접 읽기 (GitHub raw 주소 활용)
+    # pandas로 zip 파일 직접 읽기
     df = pd.read_csv(url, compression="zip")
 
     # 가장 최신 연도 데이터만 추출
@@ -68,14 +68,66 @@ if not target_row.empty:
     # 나이 카테고리 순서 정의 (0세부터 100세 이상까지 순서 고정)
     age_labels = [f"{i}세" for i in range(100)] + ["100세 이상"]
 
-    # 남성 및 여성 인구 데이터 추출
+    # 각 연령대별 남성 및 여성 인구 데이터 추출
     male_pop = [row[f"남_{age}"] for age in age_labels]
     female_pop = [row[f"여_{age}"] for age in age_labels]
 
+    # 각 연령별 전체 인구수 계산 (남성 + 여성)
+    total_by_age = [m + f for m, f in zip(male_pop, female_pop)]
+
+    # [지표 계산]
+    # 1) 총인구
+    total_population = sum(total_by_age)
+
+    if total_population > 0:
+        # 2) 평균연령 계산 (각 나이 * 해당 인구수 / 총인구)
+        # 100세 이상은 대표값 100세로 계산
+        weighted_age_sum = sum(
+            (100 if i == 100 else i) * count
+            for i, count in enumerate(total_by_age)
+        )
+        avg_age = weighted_age_sum / total_population
+
+        # 3) 주요 연령대별 인구 및 비율 계산
+        # 유소년 인구 (0~14세)
+        child_pop = sum(total_by_age[0:15])
+        child_ratio = (child_pop / total_population) * 100
+
+        # 생산연령 인구 (15~64세)
+        working_pop = sum(total_by_age[15:65])
+
+        # 고령 인구 (65세 이상)
+        elderly_pop = sum(total_by_age[65:])
+        elderly_ratio = (elderly_pop / total_population) * 100
+    else:
+        avg_age = 0.0
+        child_ratio = 0.0
+        elderly_ratio = 0.0
+
+    # 5. 주요 지표 카드 3개 표시 (그래프 위)
+    st.markdown("### 📊 지역 핵심 인구 지표")
+    m_col1, m_col2, m_col3 = st.columns(3)
+
+    m_col1.metric("총인구", f"{total_population:,} 명")
+    m_col2.metric("평균연령", f"{avg_age:.1f} 세")
+
+    # 고령화율 20% 이상 시 주의 라벨 붙이기
+    if elderly_ratio >= 20.0:
+        m_col3.metric(
+            "고령화율 ⚠️",
+            f"{elderly_ratio:.1f} %",
+            delta="초고령사회 (20% 이상)",
+            delta_color="inverse",
+        )
+    else:
+        m_col3.metric("고령화율", f"{elderly_ratio:.1f} %")
+
+    st.markdown("---")
+
+    # 6. Plotly 인구 피라미드 그래프 생성
     # 남성 인구수는 왼쪽 배치를 위해 음수(-)로 변환
     male_pop_neg = [-val for val in male_pop]
 
-    # 5. Plotly 인구 피라미드 그래프 생성
     fig = go.Figure()
 
     # 남성 막대 그래프 (왼쪽, 따뜻한 톤의 파란색/코발트)
@@ -86,7 +138,7 @@ if not target_row.empty:
             name="남성",
             orientation="h",
             marker=dict(color="#5B8FF9"),
-            customdata=male_pop,  # 툴팁에 보여줄 양수 원래 값
+            customdata=male_pop,  # 툴팁에 원래 양수 값 표시
             hovertemplate="<b>%{y}</b> 남성 인구: %{customdata:,}명<extra></extra>",
         )
     )
@@ -104,6 +156,7 @@ if not target_row.empty:
     )
 
     # 그래프 레이아웃 스타일 설정
+    max_val = max(max(male_pop), max(female_pop)) if total_population > 0 else 1
     fig.update_layout(
         title=f"<b>{selected_sido} {selected_sigungu} {selected_dong}</b> 인구 피라미드",
         title_font_size=18,
@@ -112,13 +165,9 @@ if not target_row.empty:
         xaxis=dict(
             title="인구수 (명)",
             tickformat=",",  # 천 단위 쉼표 표기
-            # x축 눈금에 음수가 아닌 양수로 표시되도록 콜백 처리
-            tickvals=[-max(male_pop + female_pop), 0, max(male_pop + female_pop)],
-            ticktext=[
-                f"{max(male_pop + female_pop):,}",
-                "0",
-                f"{max(male_pop + female_pop):,}",
-            ],
+            # x축 눈금에 음수가 아닌 양수로 표시되도록 설정
+            tickvals=[-max_val, 0, max_val],
+            ticktext=[f"{max_val:,}", "0", f"{max_val:,}"],
         ),
         yaxis=dict(
             title="연령대",
@@ -135,15 +184,20 @@ if not target_row.empty:
     # Streamlit 화면에 그래프 출력
     st.plotly_chart(fig, use_container_width=True)
 
-    # 하단 요약 정보
-    total_male = sum(male_pop)
-    total_female = sum(female_pop)
-    total_pop = total_male + total_female
+    # 7. 피라미드 아래 동네 특징 자동 한 줄 설명
+    st.markdown("#### 💡 이 동네는 아이가 많은 편인가요, 어르신이 많은 편인가요?")
 
-    m_col, f_col, t_col = st.columns(3)
-    m_col.metric("총 남성 인구", f"{total_male:,} 명")
-    f_col.metric("총 여성 인구", f"{total_female:,} 명")
-    t_col.metric("전체 인구수", f"{total_pop:,} 명")
+    # 기준 비율에 따라 자동 텍스트 생성
+    if child_ratio > elderly_ratio:
+        summary_text = f"이 동네는 어르신(65세 이상, {elderly_ratio:.1f}%)보다 **아이들(0~14세, {child_ratio:.1f}%)의 비율이 높은 젊고 활기찬 동네**입니다."
+    elif elderly_ratio >= 20.0:
+        summary_text = f"이 동네는 **65세 이상 어르신 비율이 {elderly_ratio:.1f}%로 초고령사회 기준(20%)을 넘어서는 어르신이 많은 동네**입니다."
+    elif elderly_ratio > child_ratio:
+        summary_text = f"이 동네는 아이들(0~14세, {child_ratio:.1f}%)보다 **어르신(65세 이상, {elderly_ratio:.1f}%)의 비율이 더 높은 동네**입니다."
+    else:
+        summary_text = f"이 동네는 **아이들({child_ratio:.1f}%)과 어르신({elderly_ratio:.1f}%)의 비율이 비슷한 동네**입니다."
+
+    st.info(summary_text)
 
 else:
     st.warning("선택한 지역의 인구 데이터가 없습니다.")

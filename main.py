@@ -54,24 +54,29 @@ def load_data():
     ) * 100
     sigungu_df["elderly_ratio"] = sigungu_df["elderly_ratio"].round(1)
 
-    # 2-2. GeoJSON 로드 (main 브랜치 raw URL 또는 commit raw URL 순차 시도)
+    # 2-2. GeoJSON 로드 (jsDelivr CDN 및 다중 URL 우회 요청)
     geojson_urls = [
+        "https://cdn.jsdelivr.net/gh/vusguswl/population@bbe9dde463bdbe8592e6b85569fdc4c4d2905338/sigungu.geojson",
+        "https://cdn.jsdelivr.net/gh/vusguswl/population@main/sigungu.geojson",
         "https://raw.githubusercontent.com/vusguswl/population/main/sigungu.geojson",
-        "https://github.com/vusguswl/population/raw/bbe9dde463bdbe8592e6b85569fdc4c4d2905338/sigungu.geojson",
     ]
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
     res = None
     for url in geojson_urls:
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, headers=headers, timeout=10)
             if r.status_code == 200:
                 res = r
                 break
         except Exception:
             continue
 
-    if res is None or res.status_code != 200:
-        raise Exception("GeoJSON 파일을 불러올 수 없습니다. URL 상태를 확인해 주세요.")
+    if res is None:
+        raise Exception("GeoJSON 접속 실패 - 네트워크/주소를 다시 확인해주세요.")
 
     geojson_data = res.json()
 

@@ -54,36 +54,60 @@ def load_data():
     ) * 100
     sigungu_df["elderly_ratio"] = sigungu_df["elderly_ratio"].round(1)
 
-    # 2-2. GeoJSON 로드 (jsDelivr CDN 및 다중 URL 우회 요청)
+    # 시도/시군구 명칭 맵핑용 지표 추출
+    name_map = (
+        df_2026.groupby("sigungu_code")
+        .agg({"시도": "first", "시군구": "first"})
+        .reset_index()
+    )
+    sigungu_df = pd.merge(sigungu_df, name_map, on="sigungu_code", how="left")
+
+    # 2-2. GeoJSON 가져오기 (GitHub commit raw, API, 대체 CDN 다중 접근)
     geojson_urls = [
-        "https://cdn.jsdelivr.net/gh/vusguswl/population@bbe9dde463bdbe8592e6b85569fdc4c4d2905338/sigungu.geojson",
-        "https://cdn.jsdelivr.net/gh/vusguswl/population@main/sigungu.geojson",
+        "https://raw.githubusercontent.com/vusguswl/population/bbe9dde463bdbe8592e6b85569fdc4c4d2905338/sigungu.geojson",
         "https://raw.githubusercontent.com/vusguswl/population/main/sigungu.geojson",
+        "https://cdn.jsdelivr.net/gh/vusguswl/population@main/sigungu.geojson",
+        "https://southkorea-geojson.github.io/southkorea-maps/kostat/2013/json/skorea_municipalities_2013_geo.json",  # 대한민국 시군구 표준 GeoJSON (Fallback)
     ]
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
+    geojson_data = None
 
-    res = None
     for url in geojson_urls:
         try:
-            r = requests.get(url, headers=headers, timeout=10)
+            r = requests.get(url, headers=headers, timeout=5)
             if r.status_code == 200:
-                res = r
-                break
+                data = r.json()
+                if "features" in data:
+                    geojson_data = data
+                    break
         except Exception:
             continue
 
-    if res is None:
-        raise Exception("GeoJSON 접속 실패 - 네트워크/주소를 다시 확인해주세요.")
+    if geojson_data is None:
+        raise Exception(
+            "GeoJSON 데이터를 다운로드할 수 없습니다. 인터넷 연결 및 URL 상태를 확인해 주세요."
+        )
 
-    geojson_data = res.json()
-
-    # GeoJSON 내 '코드' 속성도 5자리 문자열로 고정
+    # GeoJSON 내 '코드' 속성 정제 및 5자리 규격화
     for feature in geojson_data["features"]:
-        code_val = str(feature["properties"]["코드"]).zfill(5)
-        feature["properties"]["코드"] = code_val
+        props = feature["properties"]
+        # 속성명이 '코드', 'code', 'SIG_CD' 등 다양할 수 있어 대응
+        code_val = (
+            props.get("코드")
+            or props.get("code")
+             ancient
+            or props.get("SIG_CD")
+            or ""
+        )
+        code_val = str(code_val).zfill(5)[:5]
+        props["코드"] = code_val
+
+        # 시도, 시군구 이름 보완
+        if "시도" not in props and "sidoname" in props:
+            props["시도"] = props["sidoname"]
+        if "시군구" not in props and "name" in props:
+            props["시군구"] = props["name"]
 
     return sigungu_df, geojson_data
 
@@ -116,7 +140,12 @@ fig = px.choropleth_mapbox(
     center={"lat": 35.9, "lon": 127.8},
     opacity=0.85,
     hover_name="sigungu_code",
-    hover_data={"sigungu_code": False, "elderly_ratio": ":.1f"},
+    hover_data={
+        "sigungu_code": False,
+        "시도": True,
+        "시군구": True,
+        "elderly_ratio": ":.1f",
+    },
     labels={"elderly_ratio": "고령화율 (%)"},
 )
 
@@ -124,7 +153,7 @@ fig = px.choropleth_mapbox(
 fig.update_traces(
     marker_line_width=0.5,
     marker_line_color="#444444",
-    hovertemplate="<b>%{properties.시도} %{properties.시군구}</b><br>고령화율: <b>%{z:.1f}%</b><extra></extra>",
+    hovertemplate="<b>%{customdata[0]} %{customdata[1]}</b><br>고령화율: <b>%{z:.1f}%</b><extra></extra>",
 )
 
 fig.update_layout(
